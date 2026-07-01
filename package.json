@@ -1,0 +1,30 @@
+{
+  "name": "emberwing-burn-bot",
+  "version": "1.0.0",
+  "description": "Watches pump.fun trades for a Solana token and posts auto-generated video alerts to Telegram when a buy exceeds a configurable SOL threshold.",
+  "main": "server.js",
+  "scripts": {
+    "start": "concurrently -n SERVER,LISTENER -c green,cyan \"node server.js\" \"node listener.js\"",
+    "server": "node server.js",
+    "listener": "node listener.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "overrides": {
+    "node-telegram-bot-api": {
+      "form-data": "^4.0.4",
+      "tough-cookie": "^4.1.3",
+      "qs": "^6.14.0",
+      "uuid": "^11.1.1"
+    }
+  }
+}

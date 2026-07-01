@@ -46,7 +46,34 @@ Verify with:
 ffmpeg -version
 ```
 
-### 3. Get a Telegram bot token
+### 3. Get a pumpportal.fun API key
+
+pump.fun's real-time trade WebSocket gates `subscribeTokenTrade` /
+`subscribeAccountTrade` behind a funded API key — without one, the
+subscription is silently rejected and you'll never receive trade events
+(the listener will run and "connect", but nothing will ever log).
+
+1. Generate a wallet + API key pair (do this yourself in your own terminal —
+   the response contains a private key and should never be pasted into a
+   chat or shared with anyone):
+   ```bash
+   curl https://pumpportal.fun/api/create-wallet
+   ```
+2. The response is JSON with a newly generated Lightning wallet
+   (public/private key) and its linked `apiKey`. Save it somewhere safe.
+3. Fund the wallet's public key with **at least 0.02 SOL** — pumpportal's
+   minimum to unlock `subscribeTokenTrade`/`subscribeAccountTrade`. This is
+   separate from the SOL you're monitoring on your own token.
+4. **This isn't a one-time cost** — pumpportal charges 0.01 SOL per 10,000
+   WebSocket messages received on that wallet, ongoing. Keep a small buffer
+   topped up, or the subscription can silently stop working again once the
+   balance drains.
+5. Put the `apiKey` value in `.env` as `PUMPPORTAL_API_KEY`.
+
+If you skip this, `listener.js` prints a startup warning and you'll see zero
+buy logs no matter how much real trading volume is happening.
+
+### 4. Get a Telegram bot token
 
 1. Open a chat with [@BotFather](https://t.me/BotFather) on Telegram.
 2. Send `/newbot` and follow the prompts (choose a name and a unique
@@ -56,18 +83,26 @@ ffmpeg -version
 4. Add the bot to your group and **promote it to admin** (or at minimum give
    it permission to post media) — bots can't post in groups otherwise.
 
-### 4. Find your group's chat ID
+### 5. Find your group's chat ID
 
-Easiest method:
+Most reliable method — use your own bot, no third-party bot needed
+(third-party ID bots like @RawDataBot can be unreliable or get removed):
 
-1. Add [@RawDataBot](https://t.me/RawDataBot) (or your own bot) to the group.
-2. Send any message in the group.
-3. The bot replies with a JSON blob — look for `"chat": { "id": -100xxxxxxxxxx, ... }`.
-4. That `id` (including the `-` sign) is your `TELEGRAM_CHAT_ID`. Group IDs
-   are negative numbers; supergroups usually start with `-100`.
-5. Remove @RawDataBot from the group afterwards if you don't want it there.
+1. Make sure your bot is already a member of the group (see step 4).
+2. Send any command message in the group, e.g. `/id` (messages starting
+   with `/` always reach a bot regardless of privacy-mode settings).
+3. Fetch pending updates:
+   ```bash
+   curl -s "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates"
+   ```
+4. In the JSON response, find `"chat": { "id": -100xxxxxxxxxx, ... }`.
+   That `id` (including the `-` sign) is your `TELEGRAM_CHAT_ID`. Group IDs
+   are negative; supergroups usually start with `-100`.
+5. If you get `{"result":[]}`, check the URL in a fresh terminal/curl call
+   rather than a browser — browsers can cache the GET response and show you
+   a stale empty result even after the message went through.
 
-### 5. Configure `.env`
+### 6. Configure `.env`
 
 Copy the example file and fill in your values:
 
@@ -77,6 +112,7 @@ cp .env.example .env
 
 ```ini
 TOKEN_MINT_ADDRESS=YOUR_MINT_ADDRESS_HERE
+PUMPPORTAL_API_KEY=YOUR_PUMPPORTAL_API_KEY_HERE
 TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN_HERE
 TELEGRAM_CHAT_ID=YOUR_GROUP_CHAT_ID_HERE
 BUY_THRESHOLD_SOL=5
@@ -90,9 +126,9 @@ here. **Never edit the threshold or mint in the `.js` files**; both are read
 from `.env` via `config.js` at startup, so changing behavior is just an
 edit-and-restart.
 
-`.env` is gitignored — don't commit it, it contains your bot token.
+`.env` is gitignored — don't commit it, it contains your bot token and API key.
 
-### 6. Add video templates
+### 7. Add video templates
 
 Drop 3–5 short `.mp4` clips into `./templates/`, e.g.:
 
@@ -105,7 +141,7 @@ templates/burn3.mp4
 One is chosen at random for each alert. Keep them short (a few seconds) so
 Telegram uploads stay fast.
 
-### 7. Run it
+### 8. Run it
 
 ```bash
 npm start
@@ -144,6 +180,7 @@ Verify the full pipeline end-to-end with low stakes first:
 3. **Set a tiny threshold** in `.env` so a normal small buy triggers it:
    ```ini
    TOKEN_MINT_ADDRESS=<test_token_mint>
+   PUMPPORTAL_API_KEY=<your pumpportal API key>
    TELEGRAM_BOT_TOKEN=<test_bot_token>
    TELEGRAM_CHAT_ID=<test_group_chat_id>
    BUY_THRESHOLD_SOL=0.05
@@ -160,6 +197,7 @@ Verify the full pipeline end-to-end with low stakes first:
 6. Only after that full round-trip works, edit `.env`:
    ```ini
    TOKEN_MINT_ADDRESS=<your real $EMBR mint>
+   PUMPPORTAL_API_KEY=<your pumpportal API key>
    TELEGRAM_BOT_TOKEN=<your real bot token>
    TELEGRAM_CHAT_ID=<your real group chat id>
    BUY_THRESHOLD_SOL=5
@@ -169,9 +207,13 @@ Verify the full pipeline end-to-end with low stakes first:
 
 ### Notes / gotchas
 
-- pump.fun's WebSocket schema can change; if `txType`/`solAmount` field
-  names ever stop matching, temporarily log the raw message in
-  `listener.js` (`console.log(raw.toString())`) to see the current shape.
+- If the listener connects but never logs a buy, check for a rejection
+  message first — set `DEBUG=true` in `.env` and restart; every raw event
+  (including server error messages like a missing/underfunded API key) gets
+  logged. This is the #1 cause of "trades are happening but I see nothing."
+- pump.fun's WebSocket schema can change; with `DEBUG=true` you'll see the
+  exact raw event shape, so you can confirm `txType`/`solAmount`/
+  `traderPublicKey`/`signature` still match what `listener.js` expects.
 - If ffmpeg errors with a font-related message, set `FONT_PATH` in `.env` to
   an absolute path to any `.ttf`/`.otf` file on your system.
 - If ffmpeg errors with `No such filter: 'drawtext'`, your ffmpeg build

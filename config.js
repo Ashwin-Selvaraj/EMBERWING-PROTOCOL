@@ -16,4 +16,6 @@ module.exports = {
   PORT: parseInt(process.env.PORT || '3000', 10),
   BACKEND_URL: process.env.BACKEND_URL || 'http://localhost:3000/trigger-burn',
   FONT_PATH: process.env.FONT_PATH || '',
+  DEBUG: process.env.DEBUG === 'true',
+  PUMPPORTAL_API_KEY: process.env.PUMPPORTAL_API_KEY || '',
 };

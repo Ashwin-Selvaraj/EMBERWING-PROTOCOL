@@ -2,7 +2,7 @@ const WebSocket = require('ws');
 const fetch = require('node-fetch');
 const config = require('./config');
 
-const PUMPPORTAL_URL = 'wss://pumpportal.fun/api/data';
+const PUMPPORTAL_BASE_URL = 'wss://pumpportal.fun/api/data';
 const RECONNECT_DELAY_MS = 3000;
 
 function log(...args) {
@@ -10,7 +10,10 @@ function log(...args) {
 }
 
 function connect() {
-  const ws = new WebSocket(PUMPPORTAL_URL);
+  const url = config.PUMPPORTAL_API_KEY
+    ? `${PUMPPORTAL_BASE_URL}?api-key=${encodeURIComponent(config.PUMPPORTAL_API_KEY)}`
+    : PUMPPORTAL_BASE_URL;
+  const ws = new WebSocket(url);
 
   ws.on('open', () => {
     log('Connected to pumpportal.fun. Subscribing to trades for', config.TOKEN_MINT_ADDRESS);
@@ -26,6 +29,13 @@ function connect() {
       event = JSON.parse(raw.toString());
     } catch (err) {
       log('Failed to parse message, skipping:', err.message);
+      return;
+    }
+
+    if (config.DEBUG) log('Raw event:', JSON.stringify(event));
+
+    if (typeof event.message === 'string' && event.txType === undefined) {
+      log('pump.fun server message:', event.message);
       return;
     }
 
@@ -68,6 +78,13 @@ function connect() {
     log('WebSocket error:', err.message);
     ws.close();
   });
+}
+
+if (!config.PUMPPORTAL_API_KEY) {
+  log(
+    'WARNING: no PUMPPORTAL_API_KEY set. pump.fun rejects subscribeTokenTrade ' +
+    'without a funded (>= 0.02 SOL) API key - you will not receive any trade events.'
+  );
 }
 
 log(`Starting listener. Threshold: ${config.BUY_THRESHOLD_SOL} SOL. Backend: ${config.BACKEND_URL}`);

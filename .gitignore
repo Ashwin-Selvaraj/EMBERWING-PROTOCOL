@@ -2,4 +2,6 @@ node_modules/
 .env
 output/*.mp4
 !output/.gitkeep
+templates/*.mp4
+!templates/.gitkeep
 .DS_Store

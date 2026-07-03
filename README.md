@@ -15,7 +15,12 @@ The system has two processes:
 - **`server.js`** — an Express backend with a `POST /trigger-burn` endpoint.
   When called, it picks a random clip from `./templates`, overlays the buy
   amount and shortened wallet address with ffmpeg, and posts the result to
-  your Telegram group.
+  your Telegram group with an inline "🐦 Tweet This Buy" button. Clicking it
+  opens Twitter/X with the amount, wallet, and Solscan link pre-filled in a
+  tweet composer — note that Twitter's share intent can't auto-attach the
+  video itself (no platform supports that via a plain link), so the person
+  tweeting would need to manually download and attach the video if they want
+  it included.
 
 `listener.js` never talks to Telegram directly — it just POSTs qualifying
 buys to the backend. This keeps the on-chain watcher simple and lets you
@@ -115,6 +120,7 @@ TOKEN_MINT_ADDRESS=YOUR_MINT_ADDRESS_HERE
 PUMPPORTAL_API_KEY=YOUR_PUMPPORTAL_API_KEY_HERE
 TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN_HERE
 TELEGRAM_CHAT_ID=YOUR_GROUP_CHAT_ID_HERE
+TOKEN_TICKER=$EMBR
 BUY_THRESHOLD_SOL=5
 PORT=3000
 BACKEND_URL=http://localhost:3000/trigger-burn

@@ -18,4 +18,5 @@ module.exports = {
   FONT_PATH: process.env.FONT_PATH || '',
   DEBUG: process.env.DEBUG === 'true',
   PUMPPORTAL_API_KEY: process.env.PUMPPORTAL_API_KEY || '',
+  TOKEN_TICKER: process.env.TOKEN_TICKER || '',
 };

@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>EMBERWING $EMBR — The Trench Forge</title>
+<meta name="description" content="Emberwing ($EMBR) — Ride the dragon, or get turned to ash. The Trench Forge: incinerate bears in real-time WebGL." />
+
+<!-- ============ CORE LIBRARIES (CDN) ============ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<script src="assets/emberwing-dragon.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- ============ TYPOGRAPHY ============ -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&family=Inter:wght@400;500;600;800&display=swap" rel="stylesheet">
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ember:   '#ff5a1f',
+          magma:   '#ff8c1a',
+          coal:    '#0a0908',
+          charcoal:'#12100e',
+          ash:     '#1c1917',
+          bone:    '#e7e0d8',
+        },
+        fontFamily: {
+          display: ['Orbitron', 'sans-serif'],
+          mono:    ['"Share Tech Mono"', 'monospace'],
+          body:    ['Inter', 'sans-serif'],
+        }
+      }
+    }
+  }
+</script>
+
+<style>
+  html, body { background:#0a0908; overscroll-behavior-y:none; }
+  body { font-family:'Inter',sans-serif; color:#e7e0d8; -webkit-tap-highlight-color:transparent; }
+
+  /* ---- WebGL stage ---- */
+  #forge-stage { position:relative; height:100svh; min-height:640px; width:100%; overflow:hidden; }
+  #forge-canvas { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:crosshair; touch-action:manipulation; }
+
+  /* ---- Neon / glow utilities ---- */
+  .neon-text     { text-shadow:0 0 8px rgba(255,90,31,.85), 0 0 28px rgba(255,90,31,.45), 0 0 64px rgba(255,90,31,.25); }
+  .neon-box      { box-shadow:0 0 12px rgba(255,90,31,.35), inset 0 0 18px rgba(255,90,31,.08); }
+  .glass-ember   { background:linear-gradient(160deg, rgba(255,90,31,.07), rgba(18,16,14,.72)); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+  .scanlines::after {
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 3px);
+  }
+  .grid-bg {
+    background-image:linear-gradient(rgba(255,90,31,.05) 1px, transparent 1px),
+                     linear-gradient(90deg, rgba(255,90,31,.05) 1px, transparent 1px);
+    background-size:44px 44px;
+  }
+
+  /* ---- Score pop ---- */
+  @keyframes scorePop { 0%{transform:scale(1)} 35%{transform:scale(1.35); color:#ffd166} 100%{transform:scale(1)} }
+  .score-pop { animation:scorePop .45s cubic-bezier(.2,1.6,.4,1) both; }
+
+  /* ---- Dracarys button ---- */
+  @keyframes emberPulse {
+    0%,100% { box-shadow:0 0 18px rgba(255,90,31,.55), 0 0 60px rgba(255,90,31,.22), inset 0 0 14px rgba(255,140,26,.25); }
+    50%     { box-shadow:0 0 34px rgba(255,90,31,.95), 0 0 110px rgba(255,90,31,.40), inset 0 0 24px rgba(255,140,26,.45); }
+  }
+  .btn-dracarys { animation:emberPulse 2.2s ease-in-out infinite; }
+  .btn-dracarys:active { transform:scale(.96); }
+
+  /* ---- Toast ---- */
+  #toast { transform:translate(-50%,-24px); opacity:0; pointer-events:none; }
+
+  /* ---- Floating kill label ---- */
+  .kill-label {
+    position:absolute; pointer-events:none; font-family:'Orbitron',sans-serif; font-weight:900;
+    color:#ffd166; text-shadow:0 0 12px rgba(255,90,31,.9); white-space:nowrap; z-index:30;
+  }
+
+  /* ---- TG mockup typing dots ---- */
+  @keyframes blinkDot { 0%,80%,100%{opacity:.2} 40%{opacity:1} }
+  .tg-dot { animation:blinkDot 1.2s infinite; }
+  .tg-dot:nth-child(2){ animation-delay:.2s } .tg-dot:nth-child(3){ animation-delay:.4s }
+
+  @keyframes statusBlink { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .status-led { animation:statusBlink 1.6s ease-in-out infinite; }
+
+  ::selection { background:#ff5a1f; color:#0a0908; }
+  ::-webkit-scrollbar { width:10px; background:#0a0908; }
+  ::-webkit-scrollbar-thumb { background:#2b241f; border-radius:6px; }
+  ::-webkit-scrollbar-thumb:hover { background:#ff5a1f; }
+</style>
+</head>
+
+<body class="antialiased">
+
+<!-- ══════════════════════════════════════════════════════════════
+     SECTION 1 · THE TRENCH FORGE — WebGL Stage + HUD Overlay
+═══════════════════════════════════════════════════════════════ -->
+<section id="forge-stage" class="scanlines">
+  <canvas id="forge-canvas" aria-label="The Trench Forge — interactive 3D dragon forge"></canvas>
+
+  <!-- vignette -->
+  <div class="absolute inset-0 pointer-events-none z-10"
+       style="background:radial-gradient(ellipse at 50% 60%, transparent 40%, rgba(5,4,3,.78) 100%)"></div>
+
+  <!-- ── TOP HUD BAR ── -->
+  <header class="absolute top-0 inset-x-0 z-20 px-4 sm:px-8 pt-4 sm:pt-6 flex flex-wrap items-start justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-ember to-red-800 flex items-center justify-center text-2xl neon-box select-none">🐉</div>
+      <div>
+        <h1 class="font-display font-black text-xl sm:text-2xl tracking-widest text-bone leading-none">EMBERWING</h1>
+        <p class="font-mono text-ember text-xs tracking-[.35em] mt-1">$EMBR · TRENCH FORGE v2.0</p>
+      </div>
+    </div>
+
+    <!-- SCOREBOARD -->
+    <div class="glass-ember neon-box border border-ember/40 rounded-lg px-4 py-2.5 sm:px-6 sm:py-3">
+      <p class="font-mono text-[10px] sm:text-xs tracking-[.3em] text-ember/80">BEARS INCINERATED TODAY</p>
+      <p id="score" class="font-display font-black text-2xl sm:text-4xl text-magma neon-text tabular-nums leading-tight">000000</p>
+      <p class="font-mono text-[10px] text-stone-500 tracking-widest">ALL-TIME: <span id="score-total" class="text-stone-300">0</span></p>
+    </div>
+  </header>
+
+  <!-- ── BOTTOM HUD CONTROLS ── -->
+  <div class="absolute bottom-0 inset-x-0 z-20 px-4 pb-5 sm:pb-8 flex flex-col items-center gap-3 sm:gap-4">
+
+    <!-- primary fire control -->
+    <button id="btn-dracarys"
+      class="btn-dracarys font-display font-black tracking-[.2em] text-coal text-base sm:text-xl
+             bg-gradient-to-r from-magma via-ember to-red-600
+             px-8 sm:px-14 py-4 rounded-xl border-2 border-amber-300/60
+             transition-transform duration-100 select-none">
+      🔥 FEED THE DRAGON — DRACARYS
+    </button>
+
+    <!-- contract address -->
+    <button id="ca-box"
+      class="group glass-ember border border-ember/30 rounded-lg px-4 py-2 flex items-center gap-3 max-w-full hover:border-ember/80 transition-colors">
+      <span class="font-mono text-[10px] tracking-[.25em] text-ember/70 shrink-0">CA</span>
+      <span id="ca-text" class="font-mono text-xs sm:text-sm text-stone-300 truncate">EMBRw1nGx7dRaG0nF1REbUrNb0T9tReNcHxxxxpump</span>
+      <span class="text-ember group-hover:text-magma shrink-0 text-sm">⧉</span>
+    </button>
+
+    <!-- action grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
+      <a href="https://pump.fun" target="_blank" rel="noopener"
+         class="neon-box glass-ember text-center border border-ember/50 rounded-lg py-3 font-display font-bold tracking-[.15em] text-sm text-magma hover:bg-ember hover:text-coal transition-colors">
+        [ BUY $EMBR ON PUMP.FUN ]
+      </a>
+      <a href="https://t.me" target="_blank" rel="noopener"
+         class="neon-box glass-ember text-center border border-sky-500/50 rounded-lg py-3 font-display font-bold tracking-[.15em] text-sm text-sky-400 hover:bg-sky-500 hover:text-coal transition-colors"
+         style="box-shadow:0 0 12px rgba(56,189,248,.3), inset 0 0 18px rgba(56,189,248,.07)">
+        [ JOIN THE DRAGON ARMY ✈ ]
+      </a>
+    </div>
+    <p class="font-mono text-[10px] text-stone-600 tracking-[.3em]">CLICK THE DRAGON CORE · VAPORIZE THE JEETS · SCROLL FOR THE LORE ▼</p>
+  </div>
+
+  <!-- copy toast -->
+  <div id="toast"
+       class="fixed top-6 left-1/2 z-50 glass-ember border border-emerald-400/60 rounded-lg px-6 py-3 font-mono text-sm text-emerald-300"
+       style="box-shadow:0 0 24px rgba(52,211,153,.35)">
+    ✅ CONTRACT ADDRESS COPIED — WELCOME TO THE TRENCHES
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SECTION 2 · LORE / NARRATIVE
+═══════════════════════════════════════════════════════════════ -->
+<section class="relative grid-bg bg-charcoal py-20 sm:py-28 px-5 overflow-hidden">
+  <div class="absolute inset-x-0 top-0 h-40 pointer-events-none" style="background:linear-gradient(#0a0908, transparent)"></div>
+  <div class="absolute -bottom-32 left-1/2 -translate-x-1/2 w-[900px] h-[500px] rounded-full pointer-events-none"
+       style="background:radial-gradient(ellipse, rgba(255,90,31,.14), transparent 65%)"></div>
+
+  <div class="max-w-4xl mx-auto relative">
+    <p class="font-mono text-ember tracking-[.5em] text-xs mb-4 reveal">// CHAPTER I</p>
+    <h2 class="font-display font-black text-4xl sm:text-6xl text-bone neon-text mb-8 reveal">THE LEGEND OF<br class="sm:hidden"/> THE <span class="text-ember">EMBERWING</span></h2>
+    <div class="space-y-6 text-lg sm:text-xl leading-relaxed text-stone-400 font-body">
+      <p class="reveal">Solana was meant to be a kingdom of prosperity. Instead, <span class="text-bone font-semibold">cabals took the gates</span>, snipers poisoned the water, and paper-handed jeets ran the streets.</p>
+      <p class="reveal">From the ashes of pump.fun, <span class="text-ember font-semibold">Emberwing was born</span>. We aren't launching a token; we are staging a coup.</p>
+      <p class="reveal font-display text-bone text-xl sm:text-2xl tracking-wide border-l-4 border-ember pl-5">Choose your side: <span class="text-magma neon-text">Ride the dragon</span>, or get turned to ash.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SECTION 3 · TOKENOMICS MATRIX
+═══════════════════════════════════════════════════════════════ -->
+<section class="relative bg-coal py-20 sm:py-28 px-5">
+  <div class="max-w-6xl mx-auto">
+    <p class="font-mono text-ember tracking-[.5em] text-xs mb-4 text-center reveal">// CHAPTER II</p>
+    <h2 class="font-display font-black text-3xl sm:text-5xl text-bone text-center mb-14 reveal">FORGED IN <span class="text-ember neon-text">FAIR FIRE</span></h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <!-- Card 1 -->
+      <div class="reveal glass-ember border border-ember/25 rounded-2xl p-8 hover:border-ember/70 hover:-translate-y-2 transition-all duration-300"
+           style="box-shadow:0 8px 40px rgba(255,90,31,.10)">
+        <div class="text-4xl mb-5">🐲</div>
+        <h3 class="font-display font-bold text-xl text-magma tracking-wide mb-3">0% TEAM ALLOCATION</h3>
+        <p class="text-stone-400 leading-relaxed">The Mother of Dragons doesn't hoard tokens. Every single grain of $EMBR belongs strictly to the trenches.</p>
+      </div>
+      <!-- Card 2 -->
+      <div class="reveal glass-ember border border-ember/25 rounded-2xl p-8 hover:border-ember/70 hover:-translate-y-2 transition-all duration-300"
+           style="box-shadow:0 8px 40px rgba(255,90,31,.10)">
+        <div class="text-4xl mb-5">⏳</div>
+        <h3 class="font-display font-bold text-xl text-magma tracking-wide mb-3">AUTOMATED GRADUATION</h3>
+        <p class="text-stone-400 leading-relaxed">The bonding curve is a countdown. Once we breach the gates of pump.fun, the liquidity is locked in Raydium's fires forever.</p>
+      </div>
+      <!-- Card 3 -->
+      <div class="reveal glass-ember border border-ember/25 rounded-2xl p-8 hover:border-ember/70 hover:-translate-y-2 transition-all duration-300"
+           style="box-shadow:0 8px 40px rgba(255,90,31,.10)">
+        <div class="text-4xl mb-5">🛡️</div>
+        <h3 class="font-display font-bold text-xl text-magma tracking-wide mb-3">ANTI-SNIPER INFRASTRUCTURE</h3>
+        <p class="text-stone-400 leading-relaxed">No pre-arranged cabals. Stealth deployment. The playing field is entirely flat.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SECTION 4 · TELEGRAM BOT SIMULATION
+═══════════════════════════════════════════════════════════════ -->
+<section class="relative grid-bg bg-charcoal py-20 sm:py-28 px-5">
+  <div class="max-w-2xl mx-auto">
+    <p class="font-mono text-ember tracking-[.5em] text-xs mb-4 text-center reveal">// CHAPTER III</p>
+    <h2 class="font-display font-black text-3xl sm:text-5xl text-bone text-center mb-14 reveal">THE <span class="text-ember neon-text">BURN BOT</span> WATCHES</h2>
+
+    <div class="reveal rounded-2xl overflow-hidden border border-stone-800 bg-[#0e1621]" style="box-shadow:0 20px 80px rgba(0,0,0,.6)">
+      <!-- tg header -->
+      <div class="flex items-center gap-3 px-5 py-4 bg-[#17212b] border-b border-black/40">
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-ember to-red-800 flex items-center justify-center text-lg">🐉</div>
+        <div class="flex-1">
+          <p class="font-semibold text-white text-sm">Emberwing Burn Bot</p>
+          <p class="font-mono text-[11px] text-emerald-400 flex items-center gap-1.5">
+            <span class="status-led inline-block w-2 h-2 rounded-full bg-emerald-400"></span>[ SYSTEM STATUS: BOT WEAPON ONLINE ]
+          </p>
+        </div>
+        <span class="font-mono text-[10px] text-stone-500">v2.0</span>
+      </div>
+
+      <!-- tg feed -->
+      <div class="px-5 py-6 space-y-4">
+        <!-- whale buy -->
+        <div class="max-w-[85%] rounded-xl rounded-tl-sm bg-emerald-500/15 border border-emerald-400/40 px-4 py-3"
+             style="box-shadow:0 0 24px rgba(52,211,153,.15)">
+          <p class="font-mono text-[10px] tracking-[.25em] text-emerald-400 mb-1.5">🚨 WHALE BUY DETECTED</p>
+          <p class="font-display font-black text-2xl text-emerald-300">18.5 SOL</p>
+          <div class="mt-2 flex gap-1 items-end h-8">
+            <div class="w-2 bg-emerald-500/40 rounded-sm" style="height:30%"></div>
+            <div class="w-2 bg-emerald-500/50 rounded-sm" style="height:45%"></div>
+            <div class="w-2 bg-emerald-500/60 rounded-sm" style="height:40%"></div>
+            <div class="w-2 bg-emerald-500/70 rounded-sm" style="height:65%"></div>
+            <div class="w-2 bg-emerald-500/80 rounded-sm" style="height:80%"></div>
+            <div class="w-2 bg-emerald-400 rounded-sm" style="height:100%"></div>
+          </div>
+          <p class="font-mono text-[10px] text-stone-500 mt-2">7xKp...9fQz → $EMBR · slot 3,412,887,120</p>
+        </div>
+
+        <!-- system message -->
+        <div class="max-w-[85%] rounded-xl rounded-tl-sm bg-ember/10 border border-ember/40 px-4 py-3"
+             style="box-shadow:0 0 24px rgba(255,90,31,.15)">
+          <p class="font-mono text-[10px] tracking-[.25em] text-ember mb-1.5">SYSTEM MESSAGE</p>
+          <p class="text-stone-200 text-sm">Emberwing just incinerated a bear! 🐻🔥</p>
+        </div>
+
+        <!-- typing -->
+        <div class="flex items-center gap-1.5 px-1">
+          <span class="tg-dot w-1.5 h-1.5 rounded-full bg-stone-500"></span>
+          <span class="tg-dot w-1.5 h-1.5 rounded-full bg-stone-500"></span>
+          <span class="tg-dot w-1.5 h-1.5 rounded-full bg-stone-500"></span>
+          <span class="font-mono text-[10px] text-stone-600 ml-1">scanning mempool…</span>
+        </div>
+      </div>
+
+      <!-- tweet CTA -->
+      <div class="px-5 pb-5">
+        <button id="btn-tweet"
+          class="btn-dracarys w-full font-display font-black tracking-[.15em] text-coal text-sm sm:text-base
+                 bg-gradient-to-r from-magma via-ember to-red-600 px-6 py-4 rounded-xl border-2 border-amber-300/60 transition-transform duration-100">
+          🔥 ONE-CLICK TWEET THIS BLAST
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer class="bg-coal border-t border-stone-900 py-10 px-5 text-center">
+  <p class="font-display font-black tracking-[.3em] text-ember neon-text text-lg mb-2">EMBERWING · $EMBR</p>
+  <p class="font-mono text-[11px] text-stone-600 max-w-xl mx-auto leading-relaxed">
+    $EMBR is a memecoin with no intrinsic value or expectation of financial return. It is forged purely for the culture, the trenches, and the flame. DYOR. NFA. Dragons are not liable for incinerated portfolios.
+  </p>
+</footer>
+
+
+<!-- ══════════════════════════════════════════════════════════════
+     ENGINE — modularized into: SceneInit / Shaders / ParticlePhysics /
+     SwarmPipeline / RaycastInput / CollisionMath / HUDState
+═══════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+(() => {
+
+/* ─────────────────────────────────────────────
+   MODULE 0 · GLOBAL STATE & CONSTANTS
+───────────────────────────────────────────── */
+const CONFIG = {
+  DPR_CAP: 2,
+  SWARM_COUNT: 10,
+  BURST_POOL: 8,
+  PARTICLES_PER_BURST: 320,
+  PARTICLE_LIFE: 1.2,          // seconds — blue/gold core → burgundy smoke
+  SHAKE_DECAY: 0.4,            // seconds
+  SWARM_BOUNDS: { x: 6.5, y: 3.4, zNear: -1.5, zFar: -7 },
+};
+
+const clock = new THREE.Clock();
+const state = {
+  shakeAmp: 0,
+  wingFlap: 0,
+  coreBaseY: 0.55,
+  pointerNDC: new THREE.Vector2(-2, -2),
+};
+
+/* ─────────────────────────────────────────────
+   MODULE 1 · 3D SCENE INITIALIZATION
+   (renderer, perspective camera, light matrix)
+───────────────────────────────────────────── */
+const canvas   = document.getElementById('forge-canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, CONFIG.DPR_CAP));
+renderer.setSize(window.innerWidth, canvas.parentElement.clientHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0806);
+scene.fog = new THREE.FogExp2(0x0a0806, 0.055);
+
+// Dramatic low-angle hero camera looking UP at the core
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / canvas.parentElement.clientHeight, 0.1, 100);
+const CAM_BASE = new THREE.Vector3(0, -0.75, 4.6);
+const CAM_LOOK = new THREE.Vector3(0, 0.65, 0);
+camera.position.copy(CAM_BASE);
+camera.lookAt(CAM_LOOK);
+
+// — Light matrix —
+const ambient = new THREE.AmbientLight(0x241a14, 1.35);                  // deep charcoal base
+scene.add(ambient);
+
+const coreLight = new THREE.PointLight(0xff6a1a, 2.6, 14, 2);            // hovers at the dragon's chest → ground glow + front illumination
+coreLight.position.set(0, state.coreBaseY, 1.4);
+scene.add(coreLight);
+
+const fillLight = new THREE.PointLight(0xff9040, 0.85, 12, 2);           // warm camera-side fill so charcoal facets read
+fillLight.position.set(0.5, 0.6, 3.6);
+scene.add(fillLight);
+
+const fireDir = new THREE.DirectionalLight(0xff2d00, 1.1);               // aggressive pulsing distant-fire key
+fireDir.position.set(-4, 3, 2.5);
+scene.add(fireDir);
+
+const rimDir = new THREE.DirectionalLight(0x3355ff, 0.22);               // faint cold rim for contrast
+rimDir.position.set(4, 2, -3);
+scene.add(rimDir);
+
+// Ground disc to catch the core glow
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(16, 48),
+  new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 0.85, metalness: 0.25 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -1.65;
+scene.add(ground);
+
+/* ─────────────────────────────────────────────
+   MODULE 2 · VERTEX DISPLACEMENT SHADERS
+   (swirling liquid-magma core)
+───────────────────────────────────────────── */
+const GLSL_NOISE = /* glsl */`
+  vec3 mod289(vec3 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
+  vec4 mod289(vec4 x){ return x - floor(x * (1.0/289.0)) * 289.0; }
+  vec4 permute(vec4 x){ return mod289(((x*34.0)+1.0)*x); }
+  vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
+  float snoise(vec3 v){
+    const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+    vec3 i  = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+    vec3 g  = step(x0.yzx, x0.xyz);
+    vec3 l  = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+    i = mod289(i);
+    vec4 p = permute(permute(permute(
+              i.z + vec4(0.0, i1.z, i2.z, 1.0))
+            + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+            + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+    float n_ = 0.142857142857;
+    vec3 ns = n_ * D.wyz - D.xzx;
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+    vec4 x = x_ * ns.x + ns.yyyy;
+    vec4 y = y_ * ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+    vec4 s0 = floor(b0)*2.0 + 1.0;
+    vec4 s1 = floor(b1)*2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+    vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+    vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+    p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+    vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+    m = m * m;
+    return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+  }
+`;
+
+const magmaUniforms = {
+  uTime:  { value: 0 },
+  uHeat:  { value: 0 },   // spikes on DRACARYS
+};
+
+const magmaMaterial = new THREE.ShaderMaterial({
+  uniforms: magmaUniforms,
+  vertexShader: /* glsl */`
+    uniform float uTime;
+    uniform float uHeat;
+    varying float vDisp;
+    varying vec3  vNormalW;
+    varying vec3  vViewDir;
+    ${GLSL_NOISE}
+    void main() {
+      // Y-axis liquid twist — swirl speed rises with height
+      float twist = position.y * 1.4 + uTime * 0.55;
+      float c = cos(twist), s = sin(twist);
+      vec3 p = vec3(c * position.x - s * position.z, position.y, s * position.x + c * position.z);
+
+      // layered magma displacement along the normal — sampled on the unit
+      // sphere and scaled by local radius so the same material works on
+      // any size orb (dragon throat, chest core, etc.)
+      vec3 dir = normalize(p);
+      float rad = length(p);
+      float n = snoise(dir * 1.7 + vec3(0.0, uTime * 0.45, 0.0));
+      float n2 = snoise(dir * 4.4 - vec3(uTime * 0.7, 0.0, 0.0)) * 0.35;
+      float disp = (n + n2) * (0.15 + uHeat * 0.2) * rad;
+      vDisp = n * 0.5 + 0.5 + uHeat * 0.5;
+
+      vec3 displaced = p + dir * disp;
+      vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
+      vNormalW  = normalize(mat3(modelMatrix) * normalize(p));
+      vViewDir  = normalize(cameraPosition - worldPos.xyz);
+      gl_Position = projectionMatrix * viewMatrix * worldPos;
+    }
+  `,
+  fragmentShader: /* glsl */`
+    uniform float uTime;
+    uniform float uHeat;
+    varying float vDisp;
+    varying vec3  vNormalW;
+    varying vec3  vViewDir;
+    void main() {
+      vec3 deepBurgundy = vec3(0.28, 0.03, 0.02);
+      vec3 lavaOrange   = vec3(1.00, 0.32, 0.05);
+      vec3 forgeGold    = vec3(1.00, 0.82, 0.30);
+
+      float t = smoothstep(0.15, 0.95, vDisp);
+      vec3 col = mix(deepBurgundy, lavaOrange, t);
+      col = mix(col, forgeGold, smoothstep(0.72, 1.05, vDisp + uHeat * 0.4));
+
+      // fresnel rim — dragonfire halo
+      float fresnel = pow(1.0 - clamp(dot(vNormalW, vViewDir), 0.0, 1.0), 2.4);
+      col += vec3(1.0, 0.42, 0.10) * fresnel * (1.1 + uHeat * 1.6);
+
+      // slow breathing emissive
+      col *= 0.92 + 0.14 * sin(uTime * 2.1);
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+});
+
+// The Core — Emberwing, the low-poly baby dragon mid-roar on its
+// obsidian perch (procedural mesh: assets/emberwing-dragon.js).
+// The magma shader drives its throat + chest fire so uHeat spikes
+// make the dragon visibly "charge up" on every DRACARYS.
+const coreGroup = new THREE.Group();
+const { group: dragon, refs: dragonRefs } = buildEmberwingDragon(THREE, { fireMaterial: magmaMaterial });
+dragon.scale.setScalar(0.75);
+coreGroup.add(dragon);
+
+// Orbiting obsidian shard ring — kept wide of the flared wings
+const shardMat = new THREE.MeshStandardMaterial({ color: 0x171310, roughness: 0.35, metalness: 0.9, emissive: 0x40130a, emissiveIntensity: 0.6 });
+const shardGeo = new THREE.TetrahedronGeometry(0.22, 0);
+const shards = [];
+for (let i = 0; i < 10; i++) {
+  const shard = new THREE.Mesh(shardGeo, shardMat);
+  const a = (i / 10) * Math.PI * 2;
+  shard.userData.orbit = { angle: a, radius: 2.2 + Math.random() * 0.3, speed: 0.35 + Math.random() * 0.25, tilt: (Math.random() - 0.5) * 0.8 };
+  coreGroup.add(shard);
+  shards.push(shard);
+}
+coreGroup.position.y = state.coreBaseY;
+scene.add(coreGroup);
+
+// Invisible raycast proxy (shader-displaced meshes need a stable hit volume)
+const coreProxy = new THREE.Mesh(
+  new THREE.SphereGeometry(1.45, 12, 12),
+  new THREE.MeshBasicMaterial({ visible: false })
+);
+coreGroup.add(coreProxy);
+
+/* ─────────────────────────────────────────────
+   MODULE 3 · PARTICLE PHYSICS VERTEX SHADERS
+   ("Dracarys" flame path — pooled GPU bursts)
+───────────────────────────────────────────── */
+function makeFlameSprite() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.25, 'rgba(255,235,200,0.9)');
+  grad.addColorStop(0.6, 'rgba(255,160,80,0.35)');
+  grad.addColorStop(1.0, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+const flameSprite = makeFlameSprite();
+
+const BURST_VERT = /* glsl */`
+  uniform float uTime;
+  uniform float uStart;
+  uniform float uScale;
+  attribute vec3  aVel;
+  attribute float aLife;
+  attribute float aSize;
+  attribute float aSeed;
+  varying vec3  vColor;
+  varying float vAlpha;
+  void main() {
+    float age = uTime - uStart;
+    float t = clamp(age / aLife, 0.0, 1.0);
+
+    // eased outward flight + upward heat-lift, decelerating like drag
+    float travel = 1.0 - pow(1.0 - t, 2.2);
+    vec3 pos = aVel * travel * uScale;
+    pos.y += t * t * 0.9 * uScale;                        // buoyant lift
+    pos.x += sin(aSeed * 40.0 + t * 9.0) * 0.08 * t;      // turbulence wobble
+    pos.z += cos(aSeed * 33.0 + t * 7.0) * 0.08 * t;
+
+    // color path: searing electric-blue/gold core → smoky burgundy-orange
+    vec3 electricBlue = vec3(0.45, 0.75, 1.00);
+    vec3 forgeGold    = vec3(1.00, 0.85, 0.30);
+    vec3 emberOrange  = vec3(1.00, 0.36, 0.08);
+    vec3 burgundySmoke= vec3(0.30, 0.06, 0.05);
+    vec3 hot  = mix(electricBlue, forgeGold, aSeed);
+    vec3 mid  = mix(hot, emberOrange, smoothstep(0.05, 0.45, t));
+    vColor    = mix(mid, burgundySmoke, smoothstep(0.45, 1.0, t));
+
+    vAlpha = (1.0 - smoothstep(0.55, 1.0, t)) * step(0.0, age) * step(t, 0.999);
+
+    vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+    float sizeCurve = smoothstep(0.0, 0.12, t) * (1.0 - t * 0.55);
+    gl_PointSize = aSize * sizeCurve * uScale * (240.0 / max(0.001, -mv.z));
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const BURST_FRAG = /* glsl */`
+  uniform sampler2D uMap;
+  varying vec3  vColor;
+  varying float vAlpha;
+  void main() {
+    float a = texture2D(uMap, gl_PointCoord).a * vAlpha;
+    if (a < 0.01) discard;
+    gl_FragColor = vec4(vColor, a);
+  }
+`;
+
+class FlameBurst {
+  constructor() {
+    const N = CONFIG.PARTICLES_PER_BURST;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 3), 3)); // origin-relative
+    const vel = new Float32Array(N * 3);
+    const life = new Float32Array(N);
+    const size = new Float32Array(N);
+    const seed = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      // spherical spray biased violently TOWARD the viewer (+Z)
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const speed = 1.4 + Math.random() * 2.6;
+      vel[i * 3]     = Math.sin(phi) * Math.cos(theta) * speed;
+      vel[i * 3 + 1] = Math.cos(phi) * speed * 0.8;
+      vel[i * 3 + 2] = Math.abs(Math.sin(phi) * Math.sin(theta)) * speed * 1.6 + 0.6;
+      life[i] = CONFIG.PARTICLE_LIFE * (0.65 + Math.random() * 0.35);
+      size[i] = 14 + Math.random() * 26;
+      seed[i] = Math.random();
+    }
+    geo.setAttribute('aVel',  new THREE.BufferAttribute(vel, 3));
+    geo.setAttribute('aLife', new THREE.BufferAttribute(life, 1));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+    geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 12); // skip per-frame recompute
+
+    this.material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime:  { value: 0 },
+        uStart: { value: -100 },
+        uScale: { value: 1 },
+        uMap:   { value: flameSprite },
+      },
+      vertexShader: BURST_VERT,
+      fragmentShader: BURST_FRAG,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    this.points = new THREE.Points(geo, this.material);
+    this.points.frustumCulled = false;
+    this.points.visible = false;
+    this.busyUntil = -1;
+    scene.add(this.points);
+  }
+  fire(worldPos, scale = 1) {
+    this.points.position.copy(worldPos);
+    this.material.uniforms.uStart.value = clock.getElapsedTime();
+    this.material.uniforms.uScale.value = scale;
+    this.points.visible = true;
+    this.busyUntil = clock.getElapsedTime() + CONFIG.PARTICLE_LIFE + 0.1;
+  }
+  tick(t) {
+    this.material.uniforms.uTime.value = t;
+    if (this.points.visible && t > this.busyUntil) this.points.visible = false;
+  }
+}
+
+const burstPool = Array.from({ length: CONFIG.BURST_POOL }, () => new FlameBurst());
+let burstCursor = 0;
+function spawnBurst(worldPos, scale = 1) {
+  const b = burstPool[burstCursor];
+  burstCursor = (burstCursor + 1) % burstPool.length;
+  b.fire(worldPos, scale);
+}
+
+// Ambient drifting embers (atmosphere, one cheap Points cloud)
+const emberCloud = (() => {
+  const N = 140;
+  const geo = new THREE.BufferGeometry();
+  const pos = new Float32Array(N * 3);
+  const seed = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    pos[i * 3]     = (Math.random() - 0.5) * 14;
+    pos[i * 3 + 1] = Math.random() * 7 - 2;
+    pos[i * 3 + 2] = (Math.random() - 0.5) * 10 - 2;
+    seed[i] = Math.random();
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uMap: { value: flameSprite } },
+    vertexShader: /* glsl */`
+      uniform float uTime;
+      attribute float aSeed;
+      varying float vA;
+      void main() {
+        vec3 p = position;
+        p.y = mod(p.y + uTime * (0.15 + aSeed * 0.3) + 2.0, 7.0) - 2.0;
+        p.x += sin(uTime * 0.4 + aSeed * 30.0) * 0.4;
+        vA = 0.25 + 0.55 * sin(uTime * (1.0 + aSeed * 2.0) + aSeed * 50.0);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_PointSize = (2.0 + aSeed * 5.0) * (180.0 / max(0.001, -mv.z));
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform sampler2D uMap;
+      varying float vA;
+      void main() {
+        float a = texture2D(uMap, gl_PointCoord).a * clamp(vA, 0.0, 1.0) * 0.7;
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(1.0, 0.5, 0.15, a);
+      }
+    `,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  scene.add(pts);
+  return pts;
+})();
+
+/* ─────────────────────────────────────────────
+   MODULE 4 · SWARM PIPELINE (Drifting Jeets & Bears)
+   canvas-procedural cartoon textures on billboards
+───────────────────────────────────────────── */
+function drawBearTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.translate(128, 132);
+  // glow outline
+  g.shadowColor = 'rgba(120,190,255,.9)'; g.shadowBlur = 22;
+  // ears
+  g.fillStyle = '#8a5a33';
+  g.beginPath(); g.arc(-64, -70, 30, 0, 7); g.fill();
+  g.beginPath(); g.arc(64, -70, 30, 0, 7); g.fill();
+  // head
+  g.beginPath(); g.arc(0, 0, 88, 0, 7); g.fill();
+  g.shadowBlur = 0;
+  g.fillStyle = '#6e441f';
+  g.beginPath(); g.arc(-64, -70, 16, 0, 7); g.fill();
+  g.beginPath(); g.arc(64, -70, 16, 0, 7); g.fill();
+  // 100x headband
+  g.fillStyle = '#2563eb';
+  g.fillRect(-88, -52, 176, 30);
+  g.fillStyle = '#fff'; g.font = 'bold 24px Arial'; g.textAlign = 'center';
+  g.fillText('100x', 0, -29);
+  // muzzle
+  g.fillStyle = '#c99a63';
+  g.beginPath(); g.ellipse(0, 34, 42, 32, 0, 0, 7); g.fill();
+  g.fillStyle = '#241610';
+  g.beginPath(); g.ellipse(0, 24, 14, 10, 0, 0, 7); g.fill();
+  // sad mouth
+  g.strokeStyle = '#241610'; g.lineWidth = 5; g.lineCap = 'round';
+  g.beginPath(); g.arc(0, 62, 16, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
+  // teary eyes
+  g.fillStyle = '#241610';
+  g.beginPath(); g.arc(-34, -6, 9, 0, 7); g.fill();
+  g.beginPath(); g.arc(34, -6, 9, 0, 7); g.fill();
+  g.fillStyle = '#9adcff';
+  g.beginPath(); g.ellipse(-34, 14, 6, 13, 0, 0, 7); g.fill();
+  g.beginPath(); g.ellipse(34, 14, 6, 13, 0, 0, 7); g.fill();
+  return new THREE.CanvasTexture(c);
+}
+
+function drawJeetTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.strokeStyle = '#ff7a29'; g.lineWidth = 9; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.shadowColor = 'rgba(255,110,30,.95)'; g.shadowBlur = 18;
+  // panicked running stick figure
+  g.beginPath(); g.arc(150, 58, 26, 0, 7); g.stroke();          // head
+  g.beginPath(); g.moveTo(140, 82); g.lineTo(112, 150); g.stroke(); // torso
+  g.beginPath(); g.moveTo(134, 100); g.lineTo(178, 122); g.stroke(); // arm back
+  g.beginPath(); g.moveTo(130, 106); g.lineTo(84, 92); g.stroke();   // arm fwd
+  g.beginPath(); g.moveTo(112, 150); g.lineTo(150, 196); g.stroke(); // leg back
+  g.beginPath(); g.moveTo(112, 150); g.lineTo(62, 178); g.stroke();  // leg fwd
+  // panic face
+  g.shadowBlur = 0; g.lineWidth = 5;
+  g.beginPath(); g.arc(150, 64, 8, 0.2, Math.PI - 0.2); g.stroke();  // wail mouth
+  g.fillStyle = '#ff7a29';
+  g.beginPath(); g.arc(142, 50, 3.5, 0, 7); g.fill();
+  g.beginPath(); g.arc(160, 50, 3.5, 0, 7); g.fill();
+  // sweat drops
+  g.fillStyle = '#7dd3fc';
+  g.beginPath(); g.ellipse(186, 34, 5, 9, 0.4, 0, 7); g.fill();
+  g.beginPath(); g.ellipse(196, 56, 4, 7, 0.4, 0, 7); g.fill();
+  // red dump arrow
+  g.strokeStyle = '#ef4444'; g.lineWidth = 10;
+  g.shadowColor = 'rgba(239,68,68,.9)'; g.shadowBlur = 14;
+  g.beginPath(); g.moveTo(30, 120); g.lineTo(70, 160); g.lineTo(58, 210); g.stroke();
+  g.beginPath(); g.moveTo(58, 210); g.lineTo(38, 196); g.moveTo(58, 210); g.lineTo(80, 192); g.stroke();
+  // SELL button
+  g.shadowBlur = 0;
+  g.fillStyle = '#dc2626';
+  g.beginPath(); g.ellipse(210, 208, 34, 18, 0, 0, 7); g.fill();
+  g.fillStyle = '#fff'; g.font = 'bold 18px Arial'; g.textAlign = 'center';
+  g.fillText('SELL', 210, 214);
+  return new THREE.CanvasTexture(c);
+}
+
+const swarmTextures = [drawBearTexture(), drawJeetTexture()];
+const swarm = [];
+
+function randomEdgeSpawn(target) {
+  const B = CONFIG.SWARM_BOUNDS;
+  const side = Math.random() < 0.5 ? -1 : 1;
+  target.position.set(
+    side * (B.x * (0.7 + Math.random() * 0.45)),
+    (Math.random() - 0.5) * 2 * B.y + 0.8,
+    B.zFar + Math.random() * (B.zNear - B.zFar)
+  );
+  target.userData.drift = {
+    vx: -side * (0.12 + Math.random() * 0.22),
+    bobSpeed: 0.6 + Math.random() * 0.9,
+    bobAmp: 0.2 + Math.random() * 0.3,
+    baseY: target.position.y,
+    spin: (Math.random() - 0.5) * 0.35,
+    phase: Math.random() * Math.PI * 2,
+  };
+}
+
+for (let i = 0; i < CONFIG.SWARM_COUNT; i++) {
+  const tex = swarmTextures[i % 2];
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.1, 1.1),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.92 })
+  );
+  mesh.userData.kind = i % 2 === 0 ? 'BEAR' : 'JEET';
+  mesh.userData.alive = true;
+  randomEdgeSpawn(mesh);
+  // stagger initial X across the whole field so it starts populated
+  mesh.position.x = (Math.random() - 0.5) * 2 * CONFIG.SWARM_BOUNDS.x;
+  scene.add(mesh);
+  swarm.push(mesh);
+}
+
+function respawnTarget(mesh) {
+  randomEdgeSpawn(mesh);
+  mesh.scale.setScalar(0.001);
+  mesh.userData.alive = true;
+  mesh.visible = true;
+  gsap.to(mesh.scale, { x: 1, y: 1, z: 1, duration: 0.6, ease: 'back.out(2)' });
+}
+
+/* ─────────────────────────────────────────────
+   MODULE 5 · COLLISION MATH — proximity vector
+   pick nearest living swarm mesh to the core
+───────────────────────────────────────────── */
+const _v = new THREE.Vector3();
+function findNearestTarget() {
+  let best = null, bestD = Infinity;
+  for (const m of swarm) {
+    if (!m.userData.alive) continue;
+    const d = _v.copy(m.position).sub(coreGroup.position).lengthSq();
+    if (d < bestD) { bestD = d; best = m; }
+  }
+  return best;
+}
+
+/* ─────────────────────────────────────────────
+   MODULE 6 · HUD STATE (localStorage persistence)
+───────────────────────────────────────────── */
+const scoreEl = document.getElementById('score');
+const totalEl = document.getElementById('score-total');
+const STORE_KEY = 'embr_trench_forge';
+
+function todayStamp() { return new Date().toISOString().slice(0, 10); }
+
+let save = (() => {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
+})();
+if (save.date !== todayStamp()) save = { date: todayStamp(), today: 0, total: save.total || 0 };
+save.today = save.today || 0;
+save.total = save.total || 0;
+
+function renderScore(pop) {
+  scoreEl.textContent = String(save.today).padStart(6, '0');
+  totalEl.textContent = save.total.toLocaleString();
+  if (pop) {
+    scoreEl.classList.remove('score-pop');
+    void scoreEl.offsetWidth;               // restart CSS animation
+    scoreEl.classList.add('score-pop');
+  }
+}
+function addKill() {
+  if (save.date !== todayStamp()) { save.date = todayStamp(); save.today = 0; }
+  save.today++; save.total++;
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(save)); } catch {}
+  renderScore(true);
+}
+renderScore(false);
+
+// Floating "+1 INCINERATED" label at the victim's screen position
+const stageEl = document.getElementById('forge-stage');
+function spawnKillLabel(worldPos, text) {
+  _v.copy(worldPos).project(camera);
+  const x = (_v.x * 0.5 + 0.5) * stageEl.clientWidth;
+  const y = (-_v.y * 0.5 + 0.5) * stageEl.clientHeight;
+  const el = document.createElement('div');
+  el.className = 'kill-label text-sm sm:text-base';
+  el.textContent = text;
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  stageEl.appendChild(el);
+  gsap.fromTo(el, { y: 0, opacity: 1, scale: 0.6 },
+    { y: -70, opacity: 0, scale: 1.25, duration: 1.1, ease: 'power2.out', onComplete: () => el.remove() });
+}
+
+/* ─────────────────────────────────────────────
+   MODULE 7 · DRACARYS EVENT — the full blast chain
+───────────────────────────────────────────── */
+function shakeCamera(strength) {
+  state.shakeAmp = Math.min(state.shakeAmp + strength, 0.2);
+  gsap.killTweensOf(state, 'shakeAmp');
+  gsap.to(state, { shakeAmp: 0, duration: CONFIG.SHAKE_DECAY, ease: 'power3.out' });
+}
+
+let heatTween = null;
+const _mouthPos = new THREE.Vector3();
+function dracarys() {
+  const t = clock.getElapsedTime();
+
+  // 1 · high-velocity mesh scale-down warp + roar snap + wing kick
+  gsap.killTweensOf(coreGroup.scale);
+  gsap.timeline()
+    .to(coreGroup.scale, { x: 0.8, y: 0.8, z: 0.8, duration: 0.08, ease: 'power4.in' })
+    .to(coreGroup.scale, { x: 1, y: 1, z: 1, duration: 0.55, ease: 'elastic.out(1.1, 0.4)' });
+  gsap.killTweensOf(dragonRefs.jawPivot.rotation);
+  gsap.timeline()
+    .to(dragonRefs.jawPivot.rotation, { x: 0.5, duration: 0.09, ease: 'power4.out' })
+    .to(dragonRefs.jawPivot.rotation, { x: 0, duration: 0.6, ease: 'elastic.out(1, 0.35)' });
+  state.wingFlap = 0.55;
+  gsap.killTweensOf(state, 'wingFlap');
+  gsap.to(state, { wingFlap: 0, duration: 0.7, ease: 'power2.out' });
+
+  // 2 · heat spike in the magma shader (throat + chest fire) + light flare
+  if (heatTween) heatTween.kill();
+  magmaUniforms.uHeat.value = 1;
+  heatTween = gsap.to(magmaUniforms.uHeat, { value: 0, duration: 0.9, ease: 'power2.out' });
+  gsap.fromTo(coreLight, { intensity: 6 }, { intensity: 2.6, duration: 0.7, ease: 'power2.out' });
+
+  // 3 · camera-shake impact matrix (decays over 400ms)
+  shakeCamera(0.12);
+
+  // 4 · explosive Dracarys particle burst out of the dragon's open jaws
+  dragonRefs.mouth.getWorldPosition(_mouthPos);
+  spawnBurst(_mouthPos, 1);
+
+  // 5 · proximity vector → vaporize nearest bear/jeet
+  const victim = findNearestTarget();
+  if (victim) {
+    victim.userData.alive = false;
+    spawnBurst(victim.position, 0.45);
+    spawnKillLabel(victim.position, victim.userData.kind === 'BEAR' ? '+1 BEAR INCINERATED 🐻🔥' : '+1 JEET VAPORIZED 💨');
+    gsap.to(victim.scale, {
+      x: 0.001, y: 0.001, z: 0.001, duration: 0.28, ease: 'power4.in',
+      onComplete: () => {
+        victim.visible = false;
+        setTimeout(() => respawnTarget(victim), 1200 + Math.random() * 1800);
+      }
+    });
+    addKill();
+  }
+}
+
+/* ─────────────────────────────────────────────
+   MODULE 8 · RAYCASTING INPUT LAYER
+───────────────────────────────────────────── */
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+function pickAt(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects([coreProxy, ...swarm], false);
+  return hits.length ? hits[0].object : null;
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  const hit = pickAt(e.clientX, e.clientY);
+  if (!hit) return;
+  if (hit === coreProxy) { dracarys(); return; }
+  // direct hit on a drifting target → precision snipe
+  if (hit.userData && hit.userData.alive) {
+    hit.userData.alive = false;
+    spawnBurst(hit.position, 0.5);
+    spawnKillLabel(hit.position, hit.userData.kind === 'BEAR' ? '+1 BEAR INCINERATED 🐻🔥' : '+1 JEET VAPORIZED 💨');
+    shakeCamera(0.05);
+    gsap.to(hit.scale, {
+      x: 0.001, y: 0.001, z: 0.001, duration: 0.25, ease: 'power4.in',
+      onComplete: () => { hit.visible = false; setTimeout(() => respawnTarget(hit), 1200 + Math.random() * 1800); }
+    });
+    addKill();
+  }
+}, { passive: true });
+
+// hover cursor feedback + slight parallax
+canvas.addEventListener('pointermove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  state.pointerNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  state.pointerNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}, { passive: true });
+
+document.getElementById('btn-dracarys').addEventListener('click', dracarys);
+
+/* ─────────────────────────────────────────────
+   MODULE 9 · HUD UTILITIES (CA copy · toast · tweet)
+───────────────────────────────────────────── */
+const CA = document.getElementById('ca-text').textContent.trim();
+const toast = document.getElementById('toast');
+let toastTween = null;
+
+function showToast() {
+  if (toastTween) toastTween.kill();
+  toastTween = gsap.timeline()
+    .to(toast, { y: 0, opacity: 1, duration: 0.35, ease: 'back.out(1.8)' })
+    .to(toast, { y: -24, opacity: 0, duration: 0.4, ease: 'power2.in' }, '+=1.8');
+}
+
+document.getElementById('ca-box').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(CA);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = CA; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+  }
+  showToast();
+});
+
+document.getElementById('btn-tweet').addEventListener('click', () => {
+  const text = encodeURIComponent(
+    `🐉🔥 Emberwing just incinerated a bear! ${save.total.toLocaleString()} victims and counting. DRACARYS. $EMBR #Solana #pumpfun`
+  );
+  window.open(`https://twitter.com/intent/tweet?text=${text}`, '_blank', 'noopener');
+});
+
+/* ─────────────────────────────────────────────
+   MODULE 10 · SCROLL REVEALS (lore / cards)
+───────────────────────────────────────────── */
+const io = new IntersectionObserver((entries) => {
+  for (const en of entries) {
+    if (en.isIntersecting) {
+      gsap.fromTo(en.target, { y: 36, opacity: 0 }, { y: 0, opacity: 1, duration: 0.9, ease: 'power3.out' });
+      io.unobserve(en.target);
+    }
+  }
+}, { threshold: 0.18 });
+document.querySelectorAll('.reveal').forEach((el) => { el.style.opacity = 0; io.observe(el); });
+
+/* ─────────────────────────────────────────────
+   MODULE 11 · RENDER LOOP (60 FPS budget)
+───────────────────────────────────────────── */
+function onResize() {
+  const w = stageEl.clientWidth, h = stageEl.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // dragon idle: floating sine along local Y + gentle menacing sway
+  coreGroup.position.y = state.coreBaseY + Math.sin(t * 1.2) * 0.16;
+  dragon.rotation.y = Math.sin(t * 0.4) * 0.3;
+  dragonRefs.head.rotation.z = Math.sin(t * 0.7) * 0.06;
+  coreLight.position.y = coreGroup.position.y;
+  magmaUniforms.uTime.value = t;
+
+  // wings: slow idle breathing + DRACARYS flap kick
+  const flap = Math.sin(t * 1.7) * 0.07 + state.wingFlap;
+  dragonRefs.wingR.rotation.z = dragonRefs.wingR.userData.baseZ + flap;
+  dragonRefs.wingL.rotation.z = dragonRefs.wingL.userData.baseZ - flap;
+
+  // orbiting obsidian shards
+  for (const s of shards) {
+    const o = s.userData.orbit;
+    o.angle += dt * o.speed;
+    s.position.set(Math.cos(o.angle) * o.radius, Math.sin(o.angle * 1.7) * o.tilt, Math.sin(o.angle) * o.radius);
+    s.rotation.x += dt * 1.2; s.rotation.y += dt * 0.8;
+  }
+
+  // pulsing distant-fire directional light
+  fireDir.intensity = 0.85 + Math.sin(t * 3.1) * 0.35 + Math.sin(t * 7.7) * 0.12;
+  fireDir.color.setHSL(0.03 + Math.sin(t * 1.3) * 0.015, 1, 0.5);
+
+  // swarm drift
+  const B = CONFIG.SWARM_BOUNDS;
+  for (const m of swarm) {
+    if (!m.userData.alive) continue;
+    const d = m.userData.drift;
+    m.position.x += d.vx * dt;
+    m.position.y = d.baseY + Math.sin(t * d.bobSpeed + d.phase) * d.bobAmp;
+    m.rotation.z = Math.sin(t * 0.8 + d.phase) * d.spin;
+    m.lookAt(camera.position);
+    if (Math.abs(m.position.x) > B.x * 1.25) randomEdgeSpawn(m);
+  }
+
+  // particle bursts + embers
+  for (const b of burstPool) b.tick(t);
+  emberCloud.material.uniforms.uTime.value = t;
+
+  // camera: parallax + shake matrix
+  const px = state.pointerNDC.x === -2 ? 0 : state.pointerNDC.x;
+  const py = state.pointerNDC.y === -2 ? 0 : state.pointerNDC.y;
+  camera.position.x = CAM_BASE.x + px * 0.25 + (Math.random() - 0.5) * state.shakeAmp;
+  camera.position.y = CAM_BASE.y + py * 0.12 + (Math.random() - 0.5) * state.shakeAmp;
+  camera.position.z = CAM_BASE.z + (Math.random() - 0.5) * state.shakeAmp * 0.6;
+  camera.lookAt(CAM_LOOK);
+
+  renderer.render(scene, camera);
+}
+animate();
+
+})();
+</script>
+</body>
+</html>

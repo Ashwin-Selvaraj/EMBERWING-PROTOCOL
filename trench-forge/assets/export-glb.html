@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Emberwing — GLB Exporter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+<script src="emberwing-dragon.js"></script>
+<style>
+  body { margin:0; background:#0a0908; color:#e7e0d8; font-family:monospace; overflow:hidden; }
+  #hud { position:fixed; top:16px; left:16px; z-index:10; background:rgba(18,16,14,.85); border:1px solid #ff5a1f55; border-radius:8px; padding:14px 18px; }
+  h1 { font-size:14px; margin:0 0 8px; color:#ff8c1a; letter-spacing:.2em; }
+  p { font-size:12px; margin:4px 0; color:#a8a29e; }
+  button { margin-top:10px; background:#ff5a1f; color:#0a0908; border:0; border-radius:6px; padding:10px 18px; font-family:monospace; font-weight:bold; letter-spacing:.1em; cursor:pointer; }
+  button:hover { background:#ff8c1a; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <h1>EMBERWING · GLB EXPORT</h1>
+  <p>Triangles: <span id="tris">…</span> (budget: 15,000)</p>
+  <p>Static mesh · faceted normals baked · emissive via material factors</p>
+  <button id="dl">⬇ DOWNLOAD emberwing.glb</button>
+</div>
+<script>
+'use strict';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0908);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 0.4, 4.4);
+camera.lookAt(0, 0, 0);
+
+scene.add(new THREE.AmbientLight(0x40342a, 1.4));
+const key = new THREE.PointLight(0xff6a1a, 2.2, 20, 2);
+key.position.set(2, 2, 3);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x6688ff, 0.4);
+rim.position.set(-3, 2, -2);
+scene.add(rim);
+
+const { group, triCount } = buildEmberwingDragon(THREE);
+scene.add(group);
+document.getElementById('tris').textContent = triCount.toLocaleString();
+
+function exportGLB() {
+  return new Promise((resolve) => {
+    new THREE.GLTFExporter().parse(group, (buf) => resolve(buf), { binary: true });
+  });
+}
+window.__exportGLB = exportGLB; // automation hook
+
+document.getElementById('dl').addEventListener('click', async () => {
+  const buf = await exportGLB();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf], { type: 'model/gltf-binary' }));
+  a.download = 'emberwing.glb';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const clock = new THREE.Clock();
+(function loop() {
+  requestAnimationFrame(loop);
+  group.rotation.y = clock.getElapsedTime() * 0.5;   // turntable
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

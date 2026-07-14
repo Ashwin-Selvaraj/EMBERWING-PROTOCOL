@@ -15,8 +15,11 @@ module.exports = {
   BUY_THRESHOLD_SOL: parseFloat(process.env.BUY_THRESHOLD_SOL || '5'),
   PORT: parseInt(process.env.PORT || '3000', 10),
   BACKEND_URL: process.env.BACKEND_URL || 'http://localhost:3000/trigger-burn',
-  FONT_PATH: process.env.FONT_PATH || '',
   DEBUG: process.env.DEBUG === 'true',
   PUMPPORTAL_API_KEY: process.env.PUMPPORTAL_API_KEY || '',
   TOKEN_TICKER: process.env.TOKEN_TICKER || '',
+  // How many Telegram uploads run concurrently. Telegram's soft per-chat
+  // rate limit is roughly 1 msg/sec sustained, so pushing this much
+  // higher mostly just trades queue waiting for 429 retries.
+  UPLOAD_CONCURRENCY: parseInt(process.env.UPLOAD_CONCURRENCY || '3', 10),
 };

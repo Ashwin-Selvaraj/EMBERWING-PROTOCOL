@@ -13,18 +13,20 @@ The system has two processes:
   mint, and filters for buys at or above the threshold. Auto-reconnects every
   3s if the connection drops.
 - **`server.js`** — an Express backend with a `POST /trigger-burn` endpoint.
-  When called, it picks a random clip from `./templates`, overlays the buy
-  amount and shortened wallet address with ffmpeg, and posts the result to
-  your Telegram group with an inline "🐦 Tweet This Buy" button. Clicking it
-  opens Twitter/X with the amount, wallet, and Solscan link pre-filled in a
-  tweet composer — note that Twitter's share intent can't auto-attach the
-  video itself (no platform supports that via a plain link), so the person
-  tweeting would need to manually download and attach the video if they want
-  it included.
+  When called, it picks a random pre-existing clip from `./templates` and
+  posts it as-is to your Telegram group with an inline "🐦 Tweet This Buy"
+  button. Clicking it opens Twitter/X with the amount, wallet, and Solscan
+  link pre-filled in a tweet composer — note that Twitter's share intent
+  can't auto-attach the video itself (no platform supports that via a plain
+  link), so the person tweeting would need to manually download and attach
+  the video if they want it included. Uploads run concurrently (see
+  `UPLOAD_CONCURRENCY` below) with retry/backoff on Telegram rate limits, and
+  each template's Telegram `file_id` is cached after its first upload so
+  repeat sends skip re-transferring the file.
 
 `listener.js` never talks to Telegram directly — it just POSTs qualifying
 buys to the backend. This keeps the on-chain watcher simple and lets you
-re-render/re-send without reconnecting to the socket.
+re-send without reconnecting to the socket.
 
 ### 1. Install dependencies
 
@@ -34,24 +36,11 @@ npm install
 
 This installs `ws`, `express`, `node-telegram-bot-api`, `dotenv`,
 `node-fetch`, and (as a dev dependency) `concurrently` to run both processes
-with one command.
+with one command. No other system dependencies are required — the backend
+uploads the pre-existing template files directly, it doesn't render or
+transcode video.
 
-### 2. Install ffmpeg
-
-The backend shells out to the `ffmpeg` binary, so it must be on your `PATH`.
-
-- **macOS (Homebrew):** `brew install ffmpeg`
-- **Ubuntu/Debian:** `sudo apt install ffmpeg`
-- **Windows:** download a build from [ffmpeg.org](https://ffmpeg.org/download.html)
-  and add its `bin` folder to your `PATH`.
-
-Verify with:
-
-```bash
-ffmpeg -version
-```
-
-### 3. Get a pumpportal.fun API key
+### 2. Get a pumpportal.fun API key
 
 pump.fun's real-time trade WebSocket gates `subscribeTokenTrade` /
 `subscribeAccountTrade` behind a funded API key — without one, the
@@ -78,7 +67,7 @@ subscription is silently rejected and you'll never receive trade events
 If you skip this, `listener.js` prints a startup warning and you'll see zero
 buy logs no matter how much real trading volume is happening.
 
-### 4. Get a Telegram bot token
+### 3. Get a Telegram bot token
 
 1. Open a chat with [@BotFather](https://t.me/BotFather) on Telegram.
 2. Send `/newbot` and follow the prompts (choose a name and a unique
@@ -88,7 +77,7 @@ buy logs no matter how much real trading volume is happening.
 4. Add the bot to your group and **promote it to admin** (or at minimum give
    it permission to post media) — bots can't post in groups otherwise.
 
-### 5. Find your group's chat ID
+### 4. Find your group's chat ID
 
 Most reliable method — use your own bot, no third-party bot needed
 (third-party ID bots like @RawDataBot can be unreliable or get removed):
@@ -107,7 +96,7 @@ Most reliable method — use your own bot, no third-party bot needed
    rather than a browser — browsers can cache the GET response and show you
    a stale empty result even after the message went through.
 
-### 6. Configure `.env`
+### 5. Configure `.env`
 
 Copy the example file and fill in your values:
 
@@ -124,7 +113,7 @@ TOKEN_TICKER=$EMBR
 BUY_THRESHOLD_SOL=5
 PORT=3000
 BACKEND_URL=http://localhost:3000/trigger-burn
-FONT_PATH=
+UPLOAD_CONCURRENCY=3
 ```
 
 Everything the bot needs to know — mint address, threshold, tokens — lives
@@ -134,7 +123,7 @@ edit-and-restart.
 
 `.env` is gitignored — don't commit it, it contains your bot token and API key.
 
-### 7. Add video templates
+### 6. Add video templates
 
 Drop 3–5 short `.mp4` clips into `./templates/`, e.g.:
 
@@ -144,10 +133,12 @@ templates/burn2.mp4
 templates/burn3.mp4
 ```
 
-One is chosen at random for each alert. Keep them short (a few seconds) so
-Telegram uploads stay fast.
+One is chosen at random for each alert and uploaded as-is (no processing).
+Keep them short/small so the *first* upload of each template is fast — after
+that, its Telegram `file_id` is cached and every later send of that same
+template is a near-instant re-attach rather than a fresh upload.
 
-### 8. Run it
+### 7. Run it
 
 ```bash
 npm start
@@ -167,9 +158,13 @@ npm run listener   # terminal 2
 Both processes log timestamped lines to the terminal for:
 
 - a qualifying buy detected by the listener (amount, wallet, tx signature)
-- the backend receiving the trigger
-- ffmpeg finishing video processing
-- the Telegram send succeeding or failing (with the error message)
+- the backend receiving the trigger, tagged `[signature]`, with the current
+  queue depth and active worker count
+- per-job stage timings: queue wait, template selection, upload start/finish,
+  and total processing time — all tagged with the same `[signature]` so you
+  can grep one transaction's full timeline out of interleaved concurrent logs
+- the Telegram send succeeding or failing (with the error message), including
+  retry attempts with their backoff delay on rate-limit (429) responses
 
 ---
 
@@ -194,10 +189,10 @@ Verify the full pipeline end-to-end with low stakes first:
 4. Run `npm start` and watch the logs. Buy a tiny amount of the test token
    yourself (or wait for organic trades) and confirm:
    - the listener logs "Qualifying buy detected"
-   - the server logs the trigger, then "Video processing finished"
-   - the server logs "Telegram send succeeded" and the video + caption show
-     up in your test group with the right amount, wallet, and a working
-     Solscan link
+   - the server logs "Trigger received", then "Job started", "Template
+     selected", "Telegram upload started", and "Telegram upload completed"
+   - the video + caption show up in your test group with the right amount,
+     wallet, and a working Solscan link
 5. Try a buy *below* your threshold too, and confirm nothing fires — this
    catches off-by-one or unit mistakes (lamports vs. SOL) before they matter.
 6. Only after that full round-trip works, edit `.env`:
@@ -220,13 +215,15 @@ Verify the full pipeline end-to-end with low stakes first:
 - pump.fun's WebSocket schema can change; with `DEBUG=true` you'll see the
   exact raw event shape, so you can confirm `txType`/`solAmount`/
   `traderPublicKey`/`signature` still match what `listener.js` expects.
-- If ffmpeg errors with a font-related message, set `FONT_PATH` in `.env` to
-  an absolute path to any `.ttf`/`.otf` file on your system.
-- If ffmpeg errors with `No such filter: 'drawtext'`, your ffmpeg build
-  wasn't compiled with `libfreetype` support. Check with
-  `ffmpeg -filters | grep drawtext`. On macOS this can happen with a
-  minimal Homebrew bottle — install `brew install ffmpeg-full` instead (or
-  reinstall `ffmpeg`, which normally includes freetype) and make sure the
-  one with drawtext support is first on your `PATH`.
+- If uploads are consistently slow, check the logs for repeated "Upload
+  attempt N failed ... retrying" lines — that's Telegram's rate limit
+  (429), not a bug; the backoff (and `retry_after` hint when Telegram sends
+  one) handles it automatically. Lowering `UPLOAD_CONCURRENCY` reduces how
+  often you hit it in the first place.
+- If you see "Queue full (20), dropping trigger" during a burst, that's the
+  backpressure valve working as intended — it means qualifying buys are
+  arriving faster than `UPLOAD_CONCURRENCY` workers can drain them. Raise
+  `UPLOAD_CONCURRENCY` a little, but keep an eye on the retry logs above
+  before pushing it too high.
 - Treat your `TELEGRAM_BOT_TOKEN` like a password — rotate it via
   @BotFather (`/revoke`) if it ever leaks.
